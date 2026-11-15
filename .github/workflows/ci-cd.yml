@@ -1,0 +1,60 @@
+name: Build, Push to DockerHub & Update K8s GitOps Manifests
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "services/**"
+      - ".github/workflows/ci-cd.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [airflow, fastapi, streamlit, locust]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/mlops-pf-${{ matrix.service }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/mlops-pf-${{ matrix.service }}:latest
+
+  update-k8s-manifests:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update image tags in k8s manifests with Commit SHA
+        run: |
+          sed -i "s|mlops-pf-airflow:.*|mlops-pf-airflow:${{ github.sha }}|g" k8s/infrastructure/05-airflow.yaml
+          sed -i "s|mlops-pf-fastapi:.*|mlops-pf-fastapi:${{ github.sha }}|g" k8s/apps/06-fastapi.yaml
+          sed -i "s|mlops-pf-streamlit:.*|mlops-pf-streamlit:${{ github.sha }}|g" k8s/apps/07-streamlit.yaml
+          sed -i "s|mlops-pf-locust:.*|mlops-pf-locust:${{ github.sha }}|g" k8s/apps/08-locust.yaml
+
+      - name: Commit & Push Updated Manifests for Argo CD
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          git add k8s/
+          git diff --staged --quiet || (git commit -m "chore(gitops): bump images to ${{ github.sha }} [skip ci]" && git push origin main)

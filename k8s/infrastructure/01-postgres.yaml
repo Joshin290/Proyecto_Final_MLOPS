@@ -1,0 +1,171 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-sql
+  namespace: mlops-pf
+data:
+  init.sql: |
+    CREATE DATABASE mlflow_db;
+    CREATE DATABASE airflow_db;
+
+    \connect mlops_data;
+
+    CREATE SCHEMA IF NOT EXISTS raw_data;
+    CREATE SCHEMA IF NOT EXISTS clean_data;
+
+    CREATE TABLE IF NOT EXISTS raw_data.batch_metadata (
+        batch_id SERIAL PRIMARY KEY,
+        ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        row_count INTEGER NOT NULL,
+        payload_hash VARCHAR(64) UNIQUE NOT NULL,
+        schema_columns JSONB,
+        new_categories JSONB,
+        validation_passed BOOLEAN DEFAULT TRUE,
+        status VARCHAR(32) DEFAULT 'INGESTED'
+    );
+
+    CREATE TABLE IF NOT EXISTS raw_data.properties_raw (
+        id SERIAL PRIMARY KEY,
+        batch_id INTEGER REFERENCES raw_data.batch_metadata(batch_id),
+        ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        brokered_by VARCHAR(100),
+        status VARCHAR(100),
+        price DOUBLE PRECISION,
+        bed DOUBLE PRECISION,
+        bath DOUBLE PRECISION,
+        acre_lot DOUBLE PRECISION,
+        street VARCHAR(150),
+        city VARCHAR(150),
+        state VARCHAR(100),
+        zip_code VARCHAR(50),
+        house_size DOUBLE PRECISION,
+        prev_sold_date VARCHAR(50),
+        raw_payload JSONB
+    );
+
+    CREATE TABLE IF NOT EXISTS raw_data.inference_logs (
+        id SERIAL PRIMARY KEY,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        input_payload JSONB NOT NULL,
+        prediction DOUBLE PRECISION,
+        model_version VARCHAR(50),
+        status VARCHAR(30) NOT NULL,
+        error_message TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS clean_data.properties_clean (
+        id SERIAL PRIMARY KEY,
+        raw_batch_id INTEGER NOT NULL,
+        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        brokered_by VARCHAR(100),
+        status VARCHAR(100),
+        price DOUBLE PRECISION NOT NULL,
+        bed DOUBLE PRECISION NOT NULL,
+        bath DOUBLE PRECISION NOT NULL,
+        acre_lot DOUBLE PRECISION NOT NULL,
+        city VARCHAR(150),
+        state VARCHAR(100),
+        zip_code VARCHAR(50),
+        house_size DOUBLE PRECISION NOT NULL,
+        years_since_sold DOUBLE PRECISION NOT NULL,
+        has_prev_sold INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS clean_data.training_audit_log (
+        batch_id INTEGER PRIMARY KEY,
+        evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        records_in_batch INTEGER,
+        total_clean_records INTEGER,
+        drift_detected BOOLEAN,
+        drift_ks_stat DOUBLE PRECISION,
+        new_categories_ratio DOUBLE PRECISION,
+        trained BOOLEAN NOT NULL,
+        training_reason TEXT NOT NULL,
+        mlflow_run_id VARCHAR(64),
+        candidate_version VARCHAR(32),
+        candidate_mae DOUBLE PRECISION,
+        candidate_rmse DOUBLE PRECISION,
+        candidate_r2 DOUBLE PRECISION,
+        prod_version VARCHAR(32),
+        prod_mae DOUBLE PRECISION,
+        prod_rmse DOUBLE PRECISION,
+        promoted BOOLEAN DEFAULT FALSE,
+        promotion_reason TEXT
+    );
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: mlops-pf
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: mlops-pf
+spec:
+  serviceName: "postgres-svc"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: mlops-secrets
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+        - name: init-sql
+          configMap:
+            name: postgres-init-sql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-svc
+  namespace: mlops-pf
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

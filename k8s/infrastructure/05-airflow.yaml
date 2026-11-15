@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow
+  namespace: mlops-pf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow
+  template:
+    metadata:
+      labels:
+        app: airflow
+    spec:
+      initContainers:
+        - name: airflow-init
+          image: Joshin290/mlops-pf-airflow:latest
+          envFrom:
+            - secretRef:
+                name: mlops-secrets
+          env:
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-secrets
+                  key: AIRFLOW_DB_URL
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: "LocalExecutor"
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              airflow db migrate && \
+              airflow users create \
+                --username admin --password admin \
+                --firstname Admin --lastname User \
+                --role Admin --email admin@javeriana.edu.co || true
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+      containers:
+        - name: webserver-and-scheduler
+          image: Joshin290/mlops-pf-airflow:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: mlops-secrets
+          env:
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-secrets
+                  key: AIRFLOW_DB_URL
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: "LocalExecutor"
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "False"
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-svc:5000"
+            - name: DATA_API_URL
+              value: "http://data-api-svc:80"
+            - name: FASTAPI_URL
+              value: "http://fastapi-svc:8000"
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "1Gi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 35
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-webserver
+  namespace: mlops-pf
+spec:
+  selector:
+    app: airflow
+  ports:
+    - port: 8080
+      targetPort: 8080
