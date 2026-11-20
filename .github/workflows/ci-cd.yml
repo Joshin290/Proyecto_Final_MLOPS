@@ -6,6 +6,7 @@ on:
     paths:
       - "services/**"
       - ".github/workflows/ci-cd.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,10 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [airflow, fastapi, streamlit, locust]
+        service: [mlflow, airflow, fastapi, streamlit, locust]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to DockerHub
         uses: docker/login-action@v3
@@ -44,12 +48,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update image tags in k8s manifests with Commit SHA
+      - name: Update image tags and commit SHA in k8s manifests
         run: |
-          sed -i "s|mlops-pf-airflow:.*|mlops-pf-airflow:${{ github.sha }}|g" k8s/infrastructure/05-airflow.yaml
-          sed -i "s|mlops-pf-fastapi:.*|mlops-pf-fastapi:${{ github.sha }}|g" k8s/apps/06-fastapi.yaml
-          sed -i "s|mlops-pf-streamlit:.*|mlops-pf-streamlit:${{ github.sha }}|g" k8s/apps/07-streamlit.yaml
-          sed -i "s|mlops-pf-locust:.*|mlops-pf-locust:${{ github.sha }}|g" k8s/apps/08-locust.yaml
+          SHA="${{ github.sha }}"
+          sed -i "s|mlops-pf-mlflow:.*|mlops-pf-mlflow:${SHA}|g" k8s/infrastructure/04-mlflow.yaml
+          sed -i "s|mlops-pf-airflow:.*|mlops-pf-airflow:${SHA}|g" k8s/infrastructure/05-airflow.yaml
+          sed -i -E "s|value: \".*\" # git-commit-sha|value: \"${SHA}\" # git-commit-sha|g" k8s/infrastructure/05-airflow.yaml
+          sed -i "s|mlops-pf-fastapi:.*|mlops-pf-fastapi:${SHA}|g" k8s/apps/06-fastapi.yaml
+          sed -i "s|mlops-pf-streamlit:.*|mlops-pf-streamlit:${SHA}|g" k8s/apps/07-streamlit.yaml
+          sed -i "s|mlops-pf-locust:.*|mlops-pf-locust:${SHA}|g" k8s/apps/08-locust.yaml
 
       - name: Commit & Push Updated Manifests for Argo CD
         run: |

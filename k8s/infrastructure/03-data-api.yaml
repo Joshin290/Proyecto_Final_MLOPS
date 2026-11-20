@@ -26,12 +26,14 @@ spec:
               cpu: "300m"
               memory: "256Mi"
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: 80
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: 80
             initialDelaySeconds: 15
             periodSeconds: 20

@@ -15,7 +15,7 @@ spec:
     spec:
       initContainers:
         - name: airflow-init
-          image: Joshin290/mlops-pf-airflow:latest
+          image: joshin290/mlops-pf-airflow:latest
           envFrom:
             - secretRef:
                 name: mlops-secrets
@@ -43,8 +43,8 @@ spec:
               cpu: "500m"
               memory: "1Gi"
       containers:
-        - name: webserver-and-scheduler
-          image: Joshin290/mlops-pf-airflow:latest
+        - name: airflow
+          image: joshin290/mlops-pf-airflow:latest
           ports:
             - containerPort: 8080
           envFrom:
@@ -64,14 +64,18 @@ spec:
               value: "http://mlflow-svc:5000"
             - name: DATA_API_URL
               value: "http://data-api-svc:80"
+            - name: DATA_API_GROUP
+              value: "1"
             - name: FASTAPI_URL
               value: "http://fastapi-svc:8000"
+            - name: GIT_COMMIT_SHA
+              value: "initial" # git-commit-sha
           resources:
             requests:
               cpu: "300m"
               memory: "1Gi"
             limits:
-              cpu: "1000m"
+              cpu: "1200m"
               memory: "2Gi"
           readinessProbe:
             httpGet:
