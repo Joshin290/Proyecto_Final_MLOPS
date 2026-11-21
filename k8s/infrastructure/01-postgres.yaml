@@ -135,14 +135,19 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "mlops_data"]
+            failureThreshold: 30
+            periodSeconds: 10
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "postgres"]
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "mlops_data"]
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", "postgres"]
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "mlops_data"]
             initialDelaySeconds: 15
             periodSeconds: 20
           volumeMounts:
