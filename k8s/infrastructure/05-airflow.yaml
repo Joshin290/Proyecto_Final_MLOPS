@@ -65,7 +65,7 @@ spec:
             - name: DATA_API_URL
               value: "http://data-api-svc:80"
             - name: DATA_API_GROUP
-              value: "1"
+              value: "3"
             - name: FASTAPI_URL
               value: "http://fastapi-svc:8000"
             - name: GIT_COMMIT_SHA
