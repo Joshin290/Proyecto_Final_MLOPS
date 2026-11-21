@@ -16,6 +16,9 @@ spec:
       containers:
         - name: mlflow
           image: joshin290/mlops-pf-mlflow:30b36521f5df3a01dfd156345a84649fbf07fd1d
+          command: ["sh", "-c"]
+          args:
+            - "mlflow server --host 0.0.0.0 --port 5000 --workers 2 --backend-store-uri ${MLFLOW_DB_URL} --default-artifact-root s3://mlflow/"
           ports:
             - containerPort: 5000
           envFrom:
@@ -24,10 +27,16 @@ spec:
           resources:
             requests:
               cpu: "150m"
-              memory: "256Mi"
+              memory: "384Mi"
             limits:
               cpu: "500m"
-              memory: "512Mi"
+              memory: "1Gi"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            failureThreshold: 18
+            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health

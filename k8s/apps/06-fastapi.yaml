@@ -24,13 +24,23 @@ spec:
           env:
             - name: MLFLOW_TRACKING_URI
               value: "http://mlflow-svc:5000"
+            - name: MLFLOW_HTTP_REQUEST_TIMEOUT
+              value: "10"
+            - name: MLFLOW_HTTP_REQUEST_MAX_RETRIES
+              value: "2"
           resources:
             requests:
               cpu: "150m"
               memory: "256Mi"
             limits:
               cpu: "500m"
-              memory: "512Mi"
+              memory: "768Mi"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 18
+            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health
