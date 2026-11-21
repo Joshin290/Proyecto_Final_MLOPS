@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: streamlit
-          image: joshin290/mlops-pf-streamlit:latest
+          image: joshin290/mlops-pf-streamlit:69e0554ea95ac350349ab7b2fd14e041b1150e4e
           ports:
             - containerPort: 8501
           envFrom:
