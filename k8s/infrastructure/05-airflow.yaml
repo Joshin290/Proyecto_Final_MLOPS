@@ -15,7 +15,7 @@ spec:
     spec:
       initContainers:
         - name: airflow-init
-          image: joshin290/mlops-pf-airflow:c82feb1a8b980d9219238c4a3aea298955c29d35
+          image: joshin290/mlops-pf-airflow:be9f158fcbdb191bfe41f2a89478b1eff05e9674
           envFrom:
             - secretRef:
                 name: mlops-secrets
@@ -54,7 +54,7 @@ spec:
               memory: "1Gi"
       containers:
         - name: airflow
-          image: joshin290/mlops-pf-airflow:c82feb1a8b980d9219238c4a3aea298955c29d35
+          image: joshin290/mlops-pf-airflow:be9f158fcbdb191bfe41f2a89478b1eff05e9674
           ports:
             - containerPort: 8080
           envFrom:
@@ -81,7 +81,7 @@ spec:
             - name: FASTAPI_URL
               value: "http://fastapi-svc:8000"
             - name: GIT_COMMIT_SHA
-              value: "c82feb1a8b980d9219238c4a3aea298955c29d35" # git-commit-sha
+              value: "be9f158fcbdb191bfe41f2a89478b1eff05e9674" # git-commit-sha
           resources:
             requests:
               cpu: "300m"

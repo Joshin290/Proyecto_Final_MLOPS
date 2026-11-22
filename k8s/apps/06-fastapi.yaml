@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: fastapi
-          image: joshin290/mlops-pf-fastapi:c82feb1a8b980d9219238c4a3aea298955c29d35
+          image: joshin290/mlops-pf-fastapi:be9f158fcbdb191bfe41f2a89478b1eff05e9674
           ports:
             - containerPort: 8000
           envFrom:
