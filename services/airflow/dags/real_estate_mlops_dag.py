@@ -164,67 +164,166 @@ def _store_raw_batch(**context):
 
 
 def _validate_schema(**context):
-    """Tarea 4: Valida columnas críticas del lote recibido."""
+    """Tarea 4: Valida columnas nuevas, faltantes y anomalías de tipo frente al esquema esperado/anterior."""
     ti = context["ti"]
-    batch_id = ti.xcom_pull(key="batch_id", task_ids="store_raw_batch")
+    batch_id = int(ti.xcom_pull(key="batch_id", task_ids="store_raw_batch"))
     engine = get_engine()
+
+    expected_cols = {
+        "brokered_by", "status", "price", "bed", "bath", "acre_lot",
+        "street", "city", "state", "zip_code", "house_size", "prev_sold_date",
+    }
+    critical_cols = {"price", "house_size", "city", "state"}
+
     with engine.connect() as conn:
         raw_cols = conn.execute(
             text("SELECT schema_columns FROM raw_data.batch_metadata WHERE batch_id = :bid"),
-            {"bid": batch_id}
+            {"bid": batch_id},
         ).scalar()
+        prev_cols = conn.execute(
+            text("SELECT schema_columns FROM raw_data.batch_metadata WHERE batch_id < :bid ORDER BY batch_id DESC LIMIT 1"),
+            {"bid": batch_id},
+        ).scalar()
+        payloads = conn.execute(
+            text("SELECT raw_payload FROM raw_data.properties_raw WHERE batch_id = :bid LIMIT 5000"),
+            {"bid": batch_id},
+        ).scalars().all()
 
     received = set(raw_cols) if isinstance(raw_cols, list) else set(json.loads(raw_cols or "[]"))
-    critical_missing = {"price", "house_size", "city", "state"} - received
+    if prev_cols:
+        ref_cols = set(prev_cols) if isinstance(prev_cols, list) else set(json.loads(prev_cols))
+    else:
+        ref_cols = expected_cols
+
+    added_columns = sorted(received - ref_cols)
+    missing_columns = sorted(ref_cols - received)
+    critical_missing = sorted(critical_cols - received)
+
+    num_fields = ("price", "bed", "bath", "acre_lot", "house_size")
+    type_anomalies = {c: 0 for c in num_fields}
+    for raw_p in payloads:
+        rec = raw_p if isinstance(raw_p, dict) else json.loads(raw_p or "{}")
+        for c in num_fields:
+            v = rec.get(c)
+            if v is not None and str(v).strip() != "":
+                try:
+                    float(v)
+                except (ValueError, TypeError):
+                    type_anomalies[c] += 1
+
     schema_ok = len(critical_missing) == 0
+    schema_report = {
+        "schema_ok": schema_ok,
+        "added_columns": added_columns,
+        "missing_columns": missing_columns,
+        "critical_missing": critical_missing,
+        "type_anomalies_sample": {k: v for k, v in type_anomalies.items() if v > 0},
+        "checked_sample_rows": len(payloads),
+    }
 
     with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE raw_data.batch_metadata ADD COLUMN IF NOT EXISTS schema_report TEXT"))
         conn.execute(
-            text("UPDATE raw_data.batch_metadata SET validation_passed = :ok WHERE batch_id = :bid"),
-            {"ok": schema_ok, "bid": batch_id}
+            text("UPDATE raw_data.batch_metadata SET validation_passed = :ok, schema_report = :rep WHERE batch_id = :bid"),
+            {"ok": schema_ok, "rep": json.dumps(schema_report), "bid": batch_id},
         )
+
     ti.xcom_push(key="schema_ok", value=schema_ok)
+    ti.xcom_push(key="schema_report", value=schema_report)
 
 
 def _validate_data_quality(**context):
-    """Tarea 5: Evalúa nulos, rangos válidos y consistencia del target."""
+    """Tarea 5: Evalúa nulos, duplicados, rangos inválidos, outliers extremos y consistencia del target."""
     ti = context["ti"]
-    batch_id = ti.xcom_pull(key="batch_id", task_ids="store_raw_batch")
+    batch_id = int(ti.xcom_pull(key="batch_id", task_ids="store_raw_batch"))
     engine = get_engine()
     df = pd.read_sql(f"SELECT * FROM raw_data.properties_raw WHERE batch_id = {batch_id}", engine)
-    valid = df[df["price"].notna() & (df["price"] > 5000) & (df["price"] < 50_000_000)]
-    ti.xcom_push(key="valid_rows_count", value=int(len(valid)))
-    ti.xcom_push(key="valid_ratio", value=float(len(valid) / max(len(df), 1)))
+    total = max(len(df), 1)
+
+    valid_target = df["price"].notna() & (df["price"] > 5000) & (df["price"] < 50_000_000)
+    valid_count = int(valid_target.sum())
+    valid_ratio = float(valid_count / total)
+
+    null_rates = {
+        c: round(float(df[c].isna().mean()), 4)
+        for c in ("price", "house_size", "bed", "bath", "acre_lot", "city", "state", "zip_code")
+        if c in df.columns
+    }
+    dup_subset = ["brokered_by", "status", "price", "bed", "bath", "city", "state", "zip_code", "house_size"]
+    duplicate_rows = int(df.duplicated(subset=dup_subset).sum())
+    negative_rows = {
+        c: int((df[c] < 0).sum())
+        for c in ("bed", "bath", "acre_lot", "house_size")
+        if c in df.columns and int((df[c] < 0).sum()) > 0
+    }
+
+    outliers_iqr = {}
+    for c in ("price", "house_size"):
+        s = df.loc[valid_target, c].dropna()
+        if len(s) >= 10:
+            q1, q3 = s.quantile(0.25), s.quantile(0.75)
+            iqr = q3 - q1
+            if iqr > 0:
+                outliers_iqr[c] = int(((s < q1 - 3 * iqr) | (s > q3 + 3 * iqr)).sum())
+
+    quality_report = {
+        "total_rows": int(len(df)),
+        "valid_target_rows": valid_count,
+        "invalid_target_rows": int(len(df) - valid_count),
+        "valid_ratio": round(valid_ratio, 4),
+        "duplicate_rows": duplicate_rows,
+        "negative_numeric_rows": negative_rows,
+        "extreme_outliers_3iqr": outliers_iqr,
+        "null_rates": null_rates,
+    }
+
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE raw_data.batch_metadata ADD COLUMN IF NOT EXISTS quality_report TEXT"))
+        conn.execute(
+            text("UPDATE raw_data.batch_metadata SET quality_report = :rep WHERE batch_id = :bid"),
+            {"rep": json.dumps(quality_report), "bid": batch_id},
+        )
+
+    ti.xcom_push(key="valid_rows_count", value=valid_count)
+    ti.xcom_push(key="valid_ratio", value=valid_ratio)
+    ti.xcom_push(key="quality_report", value=quality_report)
 
 
 def _detect_new_categories(**context):
-    """Tarea 6: Detecta nuevas ciudades frente al histórico en CLEAN DATA."""
+    """Tarea 6: Detecta nuevas categorías en city, state y status frente al histórico en CLEAN DATA."""
     ti = context["ti"]
-    batch_id = ti.xcom_pull(key="batch_id", task_ids="store_raw_batch")
+    batch_id = int(ti.xcom_pull(key="batch_id", task_ids="store_raw_batch"))
     engine = get_engine()
 
     batch_df = pd.read_sql(
         f"SELECT city, state, status FROM raw_data.properties_raw WHERE batch_id = {batch_id}",
-        engine
+        engine,
     )
     hist_df = pd.read_sql(
-        f"SELECT DISTINCT city, state FROM clean_data.properties_clean WHERE raw_batch_id < {batch_id}",
-        engine
+        f"SELECT DISTINCT city, state, status FROM clean_data.properties_clean WHERE raw_batch_id < {batch_id}",
+        engine,
     )
 
-    if hist_df.empty:
-        new_cat_ratio = 1.0
-        new_cities = list(batch_df["city"].dropna().unique()[:15])
-    else:
-        known_cities = set(hist_df["city"].dropna().unique())
-        is_new = ~batch_df["city"].fillna("UNKNOWN").isin(known_cities)
-        new_cat_ratio = float(is_new.mean())
-        new_cities = list(batch_df.loc[is_new, "city"].dropna().unique()[:15])
+    per_col = {}
+    for col in ("city", "state", "status"):
+        if hist_df.empty:
+            ratio = 1.0
+            sample = list(batch_df[col].dropna().astype(str).unique()[:10])
+        else:
+            known = set(hist_df[col].dropna().astype(str).unique())
+            series = batch_df[col].fillna("UNKNOWN").astype(str)
+            is_new = ~series.isin(known)
+            ratio = float(is_new.mean())
+            sample = list(series[is_new].unique()[:10])
+        per_col[col] = {"ratio": round(ratio, 4), "new_sample": sample}
+
+    new_cat_ratio = max(v["ratio"] for v in per_col.values())
+    payload = {"max_ratio": round(new_cat_ratio, 4), "by_column": per_col}
 
     with engine.begin() as conn:
         conn.execute(
             text("UPDATE raw_data.batch_metadata SET new_categories = :nc WHERE batch_id = :bid"),
-            {"nc": json.dumps({"new_cities_sample": new_cities, "ratio": round(new_cat_ratio, 4)}), "bid": batch_id}
+            {"nc": json.dumps(payload), "bid": batch_id},
         )
     ti.xcom_push(key="new_cat_ratio", value=new_cat_ratio)
 
@@ -316,6 +415,8 @@ def _decide_training(**context):
     ti = context["ti"]
     duplicate_batch = ti.xcom_pull(key="duplicate_batch", task_ids="store_raw_batch")
     schema_ok = ti.xcom_pull(key="schema_ok", task_ids="validate_schema")
+    valid_ratio = ti.xcom_pull(key="valid_ratio", task_ids="validate_data_quality")
+    valid_ratio = 1.0 if valid_ratio is None else float(valid_ratio)
     clean_rows = ti.xcom_pull(key="clean_batch_rows", task_ids="preprocess_data")
     total_clean = ti.xcom_pull(key="total_clean_records", task_ids="preprocess_data")
     drift_detected = ti.xcom_pull(key="drift_detected", task_ids="detect_data_drift")
@@ -335,9 +436,12 @@ def _decide_training(**context):
         ti.xcom_push(key="training_reason", value="No se entrena: lote duplicado (hash ya procesado).")
         return "skip_training"
 
-    if not schema_ok or clean_rows < 30:
+    if not schema_ok or valid_ratio < 0.50 or clean_rows < 30 or total_clean < 50:
         ti.xcom_push(key="trained", value=False)
-        ti.xcom_push(key="training_reason", value=f"No se entrena: lote inválido o pequeño ({clean_rows} filas válidas).")
+        ti.xcom_push(
+            key="training_reason",
+            value=f"No se entrena: validación/calidad o suficiencia insuficiente (schema_ok={schema_ok}, valid_ratio={valid_ratio:.2%}, lote={clean_rows}, total={total_clean})."
+        )
         return "skip_training"
 
     if not has_prod_model:
