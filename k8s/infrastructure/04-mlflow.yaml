@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: mlflow
-          image: joshin290/mlops-pf-mlflow:d8f8cf80ae874b18caa24dc1e32c5d301f84874d
+          image: joshin290/mlops-pf-mlflow:016b637e053795b8878879d9cc016c65bdde1053
           command: ["sh", "-c"]
           args:
             - "mlflow server --host 0.0.0.0 --port 5000 --workers 2 --backend-store-uri ${MLFLOW_DB_URL} --default-artifact-root s3://mlflow/"
