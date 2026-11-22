@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: locust
-          image: joshin290/mlops-pf-locust:be9f158fcbdb191bfe41f2a89478b1eff05e9674
+          image: joshin290/mlops-pf-locust:08d68eb39256cbe668d8cafc78daac21d3702c21
           args: ["-f", "/mnt/locust/locustfile.py", "--host=http://fastapi-svc:8000"]
           ports:
             - containerPort: 8089
