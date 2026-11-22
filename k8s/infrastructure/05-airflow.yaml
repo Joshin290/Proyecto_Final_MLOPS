@@ -15,7 +15,7 @@ spec:
     spec:
       initContainers:
         - name: airflow-init
-          image: joshin290/mlops-pf-airflow:30b36521f5df3a01dfd156345a84649fbf07fd1d
+          image: joshin290/mlops-pf-airflow:fix-target-encoder
           envFrom:
             - secretRef:
                 name: mlops-secrets
@@ -44,7 +44,7 @@ spec:
               memory: "1Gi"
       containers:
         - name: airflow
-          image: joshin290/mlops-pf-airflow:30b36521f5df3a01dfd156345a84649fbf07fd1d
+          image: joshin290/mlops-pf-airflow:fix-target-encoder
           ports:
             - containerPort: 8080
           envFrom:
@@ -60,6 +60,8 @@ spec:
               value: "LocalExecutor"
             - name: AIRFLOW__CORE__LOAD_EXAMPLES
               value: "False"
+            - name: AIRFLOW__WEBSERVER__WORKERS
+              value: "1"
             - name: MLFLOW_TRACKING_URI
               value: "http://mlflow-svc:5000"
             - name: DATA_API_URL
@@ -75,8 +77,8 @@ spec:
               cpu: "300m"
               memory: "1Gi"
             limits:
-              cpu: "1200m"
-              memory: "2Gi"
+              cpu: "2000m"
+              memory: "4Gi"
           readinessProbe:
             httpGet:
               path: /health

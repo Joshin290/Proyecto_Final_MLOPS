@@ -404,7 +404,7 @@ def _train_candidate_model(**context):
                 ("scaler", StandardScaler())
             ]), num_cols),
             ("low_cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), low_card_cols),
-            ("high_cat", TargetEncoder(smooth="auto"), high_card_cols),
+            ("high_cat", TargetEncoder(target_type="continuous", smooth="auto"), high_card_cols),
         ]
     )
 
