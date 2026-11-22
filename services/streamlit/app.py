@@ -64,9 +64,11 @@ with tab2:
                     if row["promoted"]
                     else ("No se promovió" if row["trained"] else "Mantiene modelo actual")
                 )
+                train_r = str(row["training_reason"] or "N/A").replace("$", r"\$")
+                promo_r = str(row["promotion_reason"] or "N/A").replace("$", r"\$")
                 st.markdown(
-                    f"- **Batch {row['batch_id']}**: **{accion}** ({row['training_reason']}). "
-                    f"**{resultado}** ({row['promotion_reason']}). "
+                    f"- **Batch {row['batch_id']}**: **{accion}** ({train_r}). "
+                    f"**{resultado}** ({promo_r}). "
                     f"MLflow Run ID: `{row['mlflow_run_id'] or 'N/A'}`"
                 )
             st.divider()
