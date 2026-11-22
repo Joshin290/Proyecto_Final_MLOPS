@@ -1,3 +1,4 @@
+import json, boto3
 import os
 import requests
 import pandas as pd
@@ -10,7 +11,7 @@ DB_URL = os.environ["DATABASE_URL"]
 st.set_page_config(page_title="Real Estate MLOps Platform", layout="wide")
 st.title("Sistema MLOps Nivel 4: Inferencia Inmobiliaria y Auditoría de Lotes")
 
-tab1, tab2 = st.tabs(["1. Inferencia de Propiedades", "2. Historial de Entrenamiento y Despliegue"])
+tab1, tab2, tab3 = st.tabs(["1. Inferencia de Propiedades", "2. Historial de Entrenamiento y Despliegue", "3. Explicabilidad del Campeón (SHAP)"])
 
 with tab1:
     st.subheader("Estimación de Precio Consumiendo FastAPI + MLflow (@champion)")
@@ -72,3 +73,40 @@ with tab2:
             st.dataframe(audit_df, use_container_width=True)
     except Exception as e:
         st.error(f"Error consultando el historial en PostgreSQL: {e}")
+with tab3:
+    st.subheader("Explicabilidad Global y Local del Modelo Ganador (@champion)")
+    mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-svc:5000")
+    s3_ep = os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://minio-svc:9000")
+    try:
+        r_mv = requests.get(f"{mlflow_uri}/api/2.0/mlflow/registered-models/alias",
+                            params={"name": "real_estate_pricer", "alias": "champion"}, timeout=10)
+        r_mv.raise_for_status()
+        mv = r_mv.json()["model_version"]
+        r_run = requests.get(f"{mlflow_uri}/api/2.0/mlflow/runs/get", params={"run_id": mv["run_id"]}, timeout=10)
+        r_run.raise_for_status()
+        art_uri = r_run.json()["run"]["info"]["artifact_uri"].replace("s3://", "")
+        bucket, prefix = art_uri.split("/", 1)
+        s3 = boto3.client("s3", endpoint_url=s3_ep)
+        meta = json.loads(s3.get_object(Bucket=bucket, Key=f"{prefix}/shap_analysis/shap_global.json")["Body"].read())
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Modelo Campeón", f"v{meta['model_version']}")
+        c2.metric("Precio Base E[f(X)]", f"${meta['base_value_usd']:,.0f}")
+        c3.metric("Muestra SHAP", f"{meta['sample_size']:,}")
+        c4.metric("Variable #1", meta["global_importance"][0]["feature"])
+
+        st.dataframe(pd.DataFrame(meta["global_importance"]), use_container_width=True)
+        imgs = [
+            ("01_shap_global_grouped.png", "Importancia Global Agrupada (USD)"),
+            ("02_shap_beeswarm.png", "Distribución de Impacto (Beeswarm)"),
+            ("05_shap_dependence_top.png", f"Dependencia SHAP ({meta['top_numeric_feature']})"),
+            ("03_shap_waterfall_high.png", "Explicación Local - Propiedad Alta (P95)"),
+            ("04_shap_waterfall_low.png", "Explicación Local - Propiedad Baja (P10)"),
+        ]
+        for i in range(0, len(imgs), 2):
+            cols = st.columns(2)
+            for col, (fname, cap) in zip(cols, imgs[i:i+2]):
+                data = s3.get_object(Bucket=bucket, Key=f"{prefix}/shap_analysis/{fname}")["Body"].read()
+                col.image(data, caption=cap, use_column_width=True)
+    except Exception as e:
+        st.info(f"Aún no hay artefactos SHAP para el modelo @champion o error al cargarlos: {e}")

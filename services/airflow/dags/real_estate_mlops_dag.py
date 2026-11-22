@@ -576,6 +576,12 @@ def _promote_model(**context):
         pass
 
 
+def _explain_champion_model(**context):
+    """Tarea 16b: Aplica SHAP exclusivamente al modelo ganador (@champion)."""
+    from shap_explainer import run_shap_for_champion
+    run_shap_for_champion(sample_size=1500)
+
+
 def _reject_model(**context):
     """Tarea 17: Etiqueta el candidato como challenger_rejected sin tocar @champion."""
     ti = context["ti"]
@@ -667,6 +673,7 @@ with DAG(
 
     decide_promotion = BranchPythonOperator(task_id="decide_promotion", python_callable=_decide_promotion)
     promote_model = PythonOperator(task_id="promote_model", python_callable=_promote_model)
+    explain_champion_model = PythonOperator(task_id="explain_champion_model", python_callable=_explain_champion_model)
     reject_model = PythonOperator(task_id="reject_model", python_callable=_reject_model)
 
     notify_or_log_result = PythonOperator(
@@ -686,4 +693,5 @@ with DAG(
         decide_training >> train_candidate_model >> evaluate_candidate_model
         >> register_candidate_in_mlflow >> compare_with_production >> decide_promotion
     )
-    decide_promotion >> [promote_model, reject_model] >> notify_or_log_result >> end
+    decide_promotion >> promote_model >> explain_champion_model >> notify_or_log_result >> end
+    decide_promotion >> reject_model >> notify_or_log_result >> end

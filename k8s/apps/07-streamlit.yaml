@@ -24,6 +24,10 @@ spec:
           env:
             - name: FASTAPI_URL
               value: "http://fastapi-svc:8000"
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-svc:5000"
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: "http://minio-svc:9000"
           resources:
             requests:
               cpu: "100m"
