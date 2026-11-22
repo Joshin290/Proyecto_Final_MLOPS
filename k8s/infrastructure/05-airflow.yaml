@@ -27,12 +27,22 @@ spec:
                   key: AIRFLOW_DB_URL
             - name: AIRFLOW__CORE__EXECUTOR
               value: "LocalExecutor"
+            - name: AIRFLOW_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-secrets
+                  key: AIRFLOW_ADMIN_USER
+            - name: AIRFLOW_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-secrets
+                  key: AIRFLOW_ADMIN_PASSWORD
           command: ["/bin/bash", "-c"]
           args:
             - |
               airflow db migrate && \
               airflow users create \
-                --username admin --password admin \
+                --username "$AIRFLOW_ADMIN_USER" --password "$AIRFLOW_ADMIN_PASSWORD" \
                 --firstname Admin --lastname User \
                 --role Admin --email admin@javeriana.edu.co || true
           resources:

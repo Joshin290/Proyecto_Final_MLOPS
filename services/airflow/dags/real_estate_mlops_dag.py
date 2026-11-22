@@ -28,11 +28,11 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.utils.trigger_rule import TriggerRule
 
-DB_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://postgres:mlops_password_2026@postgres-svc:5432/mlops_data")
+DB_URL = os.environ["DATABASE_URL"]
 DATA_API_URL = os.getenv("DATA_API_URL", "http://data-api-svc:80")
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-svc:5000")
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://fastapi-svc:8000")
-RELOAD_TOKEN = os.getenv("ADMIN_RELOAD_TOKEN", "supersecret-reload-token")
+RELOAD_TOKEN = os.environ["ADMIN_RELOAD_TOKEN"]
 MODEL_NAME = "real_estate_pricer"
 GROUP_NUMBER = int(os.getenv("DATA_API_GROUP", "1"))
 

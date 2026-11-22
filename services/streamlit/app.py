@@ -5,7 +5,7 @@ import streamlit as st
 from sqlalchemy import create_engine
 
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://fastapi-svc:8000")
-DB_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://postgres:mlops_password_2026@postgres-svc:5432/mlops_data")
+DB_URL = os.environ["DATABASE_URL"]
 
 st.set_page_config(page_title="Real Estate MLOps Platform", layout="wide")
 st.title("Sistema MLOps Nivel 4: Inferencia Inmobiliaria y Auditoría de Lotes")

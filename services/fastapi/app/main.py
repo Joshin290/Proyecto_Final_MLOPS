@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-svc:5000")
-DB_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://postgres:mlops_password_2026@postgres-svc:5432/mlops_data")
-ADMIN_TOKEN = os.getenv("ADMIN_RELOAD_TOKEN", "supersecret-reload-token")
+DB_URL = os.environ["DATABASE_URL"]
+ADMIN_TOKEN = os.environ["ADMIN_RELOAD_TOKEN"]
 MODEL_NAME = "real_estate_pricer"
 
 mlflow.set_tracking_uri(MLFLOW_URI)
