@@ -586,14 +586,27 @@ def _register_candidate_in_mlflow(**context):
     mlflow.set_experiment("real_estate_continuous_training")
     client = MlflowClient()
 
+    engine = get_engine()
+    with engine.connect() as conn:
+        b_rows = conn.execute(text("SELECT DISTINCT raw_batch_id FROM clean_data.properties_clean ORDER BY raw_batch_id")).scalars().all()
+    batches_used = ",".join(str(b) for b in b_rows)
+
     with mlflow.start_run(run_name=f"batch_{batch_id}_training") as run:
         mlflow.log_params({
             "batch_id": batch_id,
+            "batches_used": batches_used,
             "total_clean_records": total_clean,
             "model_type": "HistGradientBoostingRegressor",
             "max_iter": 200,
             "learning_rate": 0.08,
             "max_depth": 8,
+            "random_state": 42,
+            "split_ratios": "train=0.64,val=0.16,test=0.20",
+            "price_filter_range": "5000-50000000",
+            "num_imputer_strategy": "median",
+            "num_scaler": "StandardScaler",
+            "low_card_encoder": "OneHotEncoder(handle_unknown=ignore)",
+            "high_card_encoder": "TargetEncoder(smooth=auto)",
             "git_commit": os.getenv("GIT_COMMIT_SHA", "main"),
         })
         mlflow.set_tag("training_reason", reason)
