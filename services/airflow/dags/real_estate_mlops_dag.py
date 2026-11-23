@@ -35,6 +35,7 @@ FASTAPI_URL = os.getenv("FASTAPI_URL", "http://fastapi-svc:8000")
 RELOAD_TOKEN = os.environ["ADMIN_RELOAD_TOKEN"]
 MODEL_NAME = "real_estate_pricer"
 GROUP_NUMBER = int(os.getenv("DATA_API_GROUP", "1"))
+DATA_API_DAY = os.getenv("DATA_API_DAY", "Tuesday")
 
 EXPECTED_COLS = {
     "brokered_by", "status", "price", "bed", "bath",
@@ -74,7 +75,7 @@ def safe_mape(y_true, y_pred):
 def _fetch_batch_from_api(**context):
     """Tarea 2: Consume el siguiente lote desde GET /data?group_number=1."""
     url = f"{DATA_API_URL}/data"
-    resp = requests.get(url, params={"group_number": GROUP_NUMBER}, timeout=30)
+    resp = requests.get(url, params={"group_number": GROUP_NUMBER, "day": DATA_API_DAY}, timeout=30)
 
     if resp.status_code in (204, 404):
         raise ValueError("La API de datos indicó que no hay más lotes disponibles para este grupo.")
