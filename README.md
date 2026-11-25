@@ -690,6 +690,336 @@ Para eliminar conflictos de puertos locales y evitar reconexiones manuales tras 
 
 ---
 
+## Validación de ArgoCD y GitOps
+
+Para garantizar despliegues reproducibles y sin intervención manual sobre Kubernetes, el clúster se administra mediante un flujo **CI/CD + GitOps** que conecta **GitHub Actions**, **Docker Hub** y **Argo CD**. Cada cambio en el código construye y publica nuevas imágenes etiquetadas con el hash exacto del commit, actualiza automáticamente los manifiestos en `k8s/` y permite que la aplicación `mlops-proyecto-final` en Argo CD sincronice el namespace `mlops-pf`.
+
+### 1. Estado General de Salud y Sincronización
+
+En el panel principal de Argo CD (`v3.6.2`), la aplicación `mlops-proyecto-final` se mantiene en estado **`Healthy`** y **`Synced`** con la política de sincronización automática activa (`Auto sync is enabled`). El resumen lateral confirma **28 recursos sincronizados** (`0 OutOfSync`) y **72 componentes saludables** (`0 Degraded`), evidenciando que el estado vivo del clúster coincide por completo con la rama `main` del repositorio (`64823f6`). Además, el bloque `LAST SYNC` muestra que el último despliegue aplicado correspondió al commit `dc8eca4` generado por `github-actions[bot]`; los commits posteriores que solo agregaron documentación o evidencias fuera de `k8s/` fueron reconocidos sin requerir redespliegues innecesarios.
+
+<p align="center">
+  <img src="Evidencias/Argo_Synced.png" alt="Estado Synced y Healthy en Argo CD" width="600" />
+</p>
+
+### 2. Configuración del Origen GitOps e Imágenes Desplegadas
+
+La vista de detalles de la aplicación valida que Argo CD monitorea directamente el repositorio `https://github.com/Joshin290/Proyecto_Final_MLOPS.git` en la rama `main` y la ruta recursiva `k8s`, desplegando sobre el clúster local (`in-cluster`) en el namespace `mlops-pf` con creación automática de namespace (`CreateNamespace`) y políticas activas de depuración (`prune: true`) y autorreparación (`selfHeal: true`). En la sección `IMAGES` se confirma que los cinco microservicios propios (`airflow`, `fastapi`, `locust`, `mlflow` y `streamlit`) corren de forma uniforme con la etiqueta inmutable `789702df2df28bafa6ee06a1b1f7bd783e92a0c5`, junto a los servicios base (`postgres:15-alpine`, `minio`, `prometheus`, `grafana` y `data-api`).
+
+<p align="center">
+  <img src="Evidencias/Details.png" alt="Detalles de configuración GitOps en Argo CD" width="600" />
+</p>
+
+### 3. Trazabilidad entre GitHub Actions y Docker Hub
+
+La integración continua automatiza la actualización de versiones sin editar los archivos YAML manualmente. Al completarse el *build* de las imágenes en Docker Hub, el workflow de GitHub Actions generó el commit automático `dc8eca4` (`chore(gitops): bump images to 789702d [skip ci]`), modificando los 5 manifiestos correspondientes (`04-mlflow.yaml`, `05-airflow.yaml`, `06-fastapi.yaml`, `07-streamlit.yaml` y `08-locust.yaml`) para reemplazar el hash anterior (`016b637...`) por el nuevo (`789702d...`) e incluyendo `[skip ci]` para evitar ciclos infinitos de ejecución.
+
+<p align="center">
+  <img src="Evidencias/Commit_Sync.png" alt="Commit automático de GitOps en GitHub" width="600" />
+</p>
+
+En paralelo, la verificación en Docker Hub (por ejemplo, en el repositorio `joshin290/mlops-pf-airflow`) confirma la publicación de la etiqueta exacta `789702df2df28bafa6...` junto a `latest` y los historiales de commits previos, registrando además descargas recientes (*pulled*) directamente desde el clúster de Kubernetes.
+
+<p align="center">
+  <img src="Evidencias/dockerhub_Validation.png" alt="Validación de etiquetas publicadas en Docker Hub" width="600" />
+</p>
+
+### 4. Resultado de la Sincronización e Historial de Despliegues (*Rollback*)
+
+El detalle de la operación `Sync` verifica que la actualización hacia la revisión `dc8eca4` fue disparada por `automated sync policy`, completándose en **3 segundos** en fase **`Succeeded`** (`successfully synced (all tasks run)`) y manteniendo intactos los recursos persistentes y de configuración (`Namespace`, `ConfigMap` y `PersistentVolumeClaim` en estado `Synced`/`Healthy`).
+
+<p align="center">
+  <img src="Evidencias/Sync_Status.png" alt="Detalle de operación Sync exitosa en Argo CD" width="600" />
+</p>
+
+Finalmente, la pestaña `HISTORY AND ROLLBACK` conserva la línea de tiempo completa de despliegues automáticos —desde la revisión previa `119b051` hasta la versión vigente `dc8eca4`, ambas aplicadas en 3 segundos por la política automática—, lo que garantiza auditoría completa del ciclo de vida y capacidad inmediata de reversión (*rollback*) ante cualquier incidente.
+
+<p align="center">
+  <img src="Evidencias/History_Rollback.png" alt="Historial de despliegues y rollback en Argo CD" width="600" />
+</p>
+
+---
+
+## Pruebas de Ejecución y Análisis de Resultados
+
+Para validar el ciclo completo de **entrenamiento continuo (CT)**, gobernanza de modelos, trazabilidad de artefactos y explicabilidad, se ejecutó el pipeline `real_estate_mlops_dag` desde un estado limpio (PostgreSQL, MLflow, MinIO y Airflow reiniciados) consumiendo secuencialmente la totalidad de los lotes entregados por la `Data API` (`group_number=3`, `day=Tuesday`).
+
+En total se realizaron **8 ejecuciones del DAG en Airflow**: **6 corridas exitosas** que procesaron **1,080,263 registros limpios** (generando las versiones `v1` a `v6` en MLflow) y **2 ejecuciones adicionales de validación de fin de datos (ejecuciones 7 y 8)**, logrando evidenciar en operación real todos los escenarios críticos del sistema: creación de línea base, reentrenamiento por *data drift* y nuevas categorías geográficas, rechazo automático de candidatos inferiores, recuperación frente a cambios severos de distribución y control determinístico de errores HTTP.
+
+<p align="center">
+  <img src="Evidencias/Test_Airflow.png" alt="Airflow dags" width="600" />
+</p>
+
+
+<p align="center">
+  <img src="Evidencias/Streamlit_Total.png" alt="Total Batchs" width="600" />
+</p>
+---
+
+
+
+A continuación se va a dar mayor detalle acerca de tres ejecuciones del DAG, dos donde se presentó una promoción del modelo y una en la que el modelo fue rechazado.
+
+### Ejecución 3 (Batch 3):
+
+- **Ejecución en Airflow:** `real_estate_mlops_dag` · `2026-11-24 03:41:12 UTC`
+- **Registro en MLflow:** `batch_3_training` (`c3cde555da8540a9a299a92e3eb4c6b5`)
+- **Modelo generado:** `real_estate_pricer` **v3** (promovido a `@champion`)
+- **Versión del código (Git):** `789702df2df28bafa6ee06a1b1f7bd783e92a0c5`
+- **Datos acumulados:** `396,565` registros limpios (`batches_used = 1,2,3`)
+
+<p align="center">
+  <img src="Evidencias/MLFlowV3.png" alt="Batch 3" width="600" />
+</p>
+
+El sistema decidió entrenar el modelo v3 durante el Batch 3 porque, al recibir 229,168 nuevos registros (llevando el acumulado a 396,565 datos limpios), detectó la llegada masiva de nuevas categorías geográficas en el 100.0% del lote, superando ampliamente el umbral mínimo del 10% definido para activar el reentrenamiento. Aunque en esta iteración no se detectó data drift en la distribución numérica (el estadístico KS fue de apenas 0.0201, muy por debajo del límite de 0.08), la regla automática de decisión determinó que era necesario entrenar un nuevo candidato para que aprendiera estas ubicaciones inéditas que la versión anterior (v2) no había visto, permitiéndole adaptarse a los nuevos mercados y mejorar el desempeño lo suficiente como para ser promovido.
+
+#### Análisis de SHAP
+
+- **Importancia global de variables:** Muestra el ranking de los factores que más pesan en el precio estimado por el modelo v3. El código postal (zip_code) y el tamaño de la vivienda (house_size) lideran con claridad, seguidos por la cantidad de baños (bath), el corredor (brokered_by) y el estado (state), mientras que variables como bed, status y years_since_sold tienen una influencia mucho menor.
+
+<p align="center">
+  <img src="Evidencias/Shap1_V3.png" alt="SHAP V3" width="600" />
+</p>
+
+
+- **Dirección e impacto de cada variable (Beeswarm):** Detalla cómo los valores altos (rojo) o bajos (azul) de cada característica empujan el precio hacia arriba o hacia abajo. El comportamiento coincide con la lógica del mercado: códigos postales más cotizados, casas más grandes, mayor número de baños y propiedades en venta (status_for_sale) o ubicadas en Florida (state_Florida) elevan el valor estimado, mientras que un mayor tiempo desde la última venta (years_since_sold) tiende a reducirlo ligeramente.
+
+<p align="center">
+  <img src="Evidencias/Shap2_V3.png" alt="SHAP V3" width="600" />
+</p>
+
+
+- **Explicación local de una propiedad de precio alto (Waterfall):** Parte del precio promedio base del modelo ($196,753.45) hasta alcanzar una estimación de $266,500.71. El aumento se explica principalmente por la ubicación (zip_code = 12589.0: +$34,185.45 y city = Wallkill, Nueva York), el tamaño (1,780 ft²: +$14,379.37) y el corredor (+$10,796.27), con una leve disminución solo por figurar como vendida (status = sold: -$1,500.15).
+
+<p align="center">
+  <img src="Evidencias/Shap3_V3.png" alt="SHAP V3" width="600" />
+</p>
+
+
+- **Explicación local de una propiedad de precio bajo (Waterfall):** Parte del mismo valor base ($196,753.45) y desciende hasta $114,087.40. La caída está marcada por la ubicación y el corredor (zip_code = 66749.0: -$59,961.57, brokered_by: -$22,896.44, lote de 0.16 acres: -$12,880.04 y su localización en Iola, Kansas), factores que pesan más que el efecto positivo de contar con una casa amplia (2,819 ft²: +$21,759.25) y 2 baños (+$4,683.56).
+
+<p align="center">
+  <img src="Evidencias/Shap4_V3.png" alt="SHAP V3" width="600" />
+</p>
+
+
+- **Efecto del tamaño de la vivienda (Dependencia SHAP):** Representa cómo cambia el aporte de house_size (recortado al percentil 99) según los pies cuadrados de la propiedad. Las viviendas por debajo de ~1,400 ft² restan valor respecto al promedio (hasta cerca de -$60,000 USD), mientras que por encima de ese umbral el impacto se vuelve positivo y crece de forma sostenida hasta estabilizarse entre +$20,000 y +$35,000 USD a partir de los 2,200 ft².
+
+<p align="center">
+  <img src="Evidencias/Shap5_V3.png" alt="SHAP V3" width="600" />
+</p>
+
+
+
+### Ejecución 4 (Batch 4):
+
+- **Ejecución en Airflow:** `real_estate_mlops_dag` · `2026-11-24 03:53:01 UTC`
+- **Registro en MLflow:** `batch_4_training` (`c5091d26dd5a4a39a21ba8757ab81356`)
+- **Modelo generado:** `real_estate_pricer` **v4** (rechazado — **v3** se mantiene como `@champion`)
+- **Versión del código (Git):** `789702df2df28bafa6ee06a1b1f7bd783e92a0c5`
+- **Datos acumulados:** `400,615` registros limpios (`batches_used = 1,2,3,4`)
+
+<p align="center">
+  <img src="Evidencias/MLFlowV4.png" alt="Batch 4" width="600" />
+</p>
+
+Durante el Batch 4, el sistema decidió entrenar el modelo **v4** porque detectó un cambio en la distribución de los datos (*data drift*) con un estadístico **KS de 0.271**, superando el umbral de **0.08**, además de la llegada de nuevas categorías geográficas. Sin embargo, este lote aportó únicamente **4,050 registros nuevos** (apenas un 1% adicional sobre el acumulado previo de 396,565 datos), lo cual fue insuficiente para mejorar el aprendizaje del modelo frente a la versión que ya estaba en producción.
+
+Al comparar ambos modelos sobre el mismo conjunto de prueba, **v4** obtuvo un desempeño inferior al campeón vigente (**v3**): su error promedio (MAE) subió de **$33,870** a **$34,712** (un empeoramiento del **2.48%**, lejos de la mejora mínima exigida del **3%**) y su RMSE aumentó en un **2.40%** (de **$43,908** a **$44,961**, superando el límite máximo de tolerancia del **1%**). Al incumplir las dos reglas de promoción, la compuerta `decide_promotion` activó automáticamente la rama `reject_model`, descartó **v4** como candidato y protegió la API manteniendo intacta la versión **v3** en producción.
+
+
+### Ejecución 6 (Batch 6):
+
+- **Ejecución en Airflow:** `real_estate_mlops_dag` · `2026-11-24 04:08:16 UTC`
+- **Registro en MLflow:** `batch_6_training` (`93b2cee60692421bb9f65a9a9cb820cb`)
+- **Modelo generado:** `real_estate_pricer` **v6** (promovido a `@champion` definitivo)
+- **Versión del código (Git):** `789702df2df28bafa6ee06a1b1f7bd783e92a0c5`
+- **Datos acumulados:** `1,080,263` registros limpios (`batches_used = 1,2,3,4,5,6`)
+
+<p align="center">
+  <img src="Evidencias/MLFlowV6.png" alt="Batch 6" width="600" />
+</p>
+
+El sistema decidió entrenar el modelo **v6** durante el Batch 6 porque, al recibir **360,603 nuevos registros** (el lote más grande del ciclo, superando el millón de propiedades acumuladas), detectó un fuerte cambio en la distribución de los datos (*data drift*) con un estadístico **KS de 1.000**, muy por encima del umbral de **0.08**. Al compararse frente al campeón vigente (**v5**) sobre el conjunto de prueba actualizado, **v6** redujo el error promedio (MAE) en un **46.63%** (`$139,425` frente a `$261,226`) y bajó el RMSE en un **50.08%**, logrando la promoción automática a producción y la recarga en caliente en FastAPI.
+
+#### ¿En qué mejoró el Batch 6 (`v6`) frente al Batch 3 (`v3`)?
+
+- **Mayor capacidad explicativa ($R^2$):** Es la mejora más clara entre ambos modelos. Mientras `v3` explicaba el **59.15%** de la variación de los precios en prueba (`test_r2 = 0.5915`), `v6` alcanzó un **75.24%** (`test_r2 = 0.7524`), lo que representa un salto de **+16.09 puntos porcentuales** (y subió también en validación de `0.5989` a `0.7275` y en entrenamiento de `0.6683` a `0.7809`).
+- **Cobertura casi 3 veces mayor y adaptación a mercados de alto valor:** `v6` pasó de entrenarse con `396,565` registros a **1,080,263 registros** (`2.7x` más datos), incorporando estados costosos y viviendas de gama alta que `v3` aún no conocía. Esto se refleja en el precio base promedio del modelo, que pasó de `$196,753` en `v3` a **`$566,497`** en `v6`.
+- **Estabilidad del error porcentual (MAPE) pese al cambio de escala:** Aunque el error en dólares (MAE y RMSE) aumentó frente a `v3` (`$139,425` vs. `$34,729`) debido a que el mercado analizado ahora incluye viviendas de millones de dólares, el **error porcentual relativo (MAPE)** se mantuvo prácticamente estable (**27.86%** en `v6` frente a **25.81%** en `v3`, apenas `+2.05` puntos de diferencia para un rango de precios mucho más amplio y complejo).
+- **Mejor comprensión de propiedades grandes y nuevos estados:** En `v3`, el efecto del tamaño de la casa dejaba de crecer alrededor de los `2,200 ft²`, mientras que `v6` aprendió a valorar de forma continua viviendas de hasta `6,000 ft²`. Además, la variable `state` ganó peso (subiendo al 4.º lugar global y superando a `brokered_by`), permitiendo diferenciar mercados premium como California, Florida, Washington y Arizona.
+
+#### Análisis de SHAP
+
+- **Importancia global de variables:** Muestra el ranking de los factores que más influyen en las predicciones de `v6`. Al igual que en `v3`, el código postal (`zip_code`, con un impacto medio cercano a `$179,000 USD`) y el tamaño de la vivienda (`house_size`, ~`$131,000 USD`) dominan el cálculo, seguidos por los baños (`bath`), el estado (`state` —que escala una posición respecto a `v3`—) y el corredor (`brokered_by`).
+
+<p align="center">
+  <img src="Evidencias/Shap1_V6.png" alt="SHAP Global V6" width="600" />
+</p>
+
+- **Dirección e impacto de cada variable (Beeswarm):** Confirma cómo los valores altos (rojo) de `zip_code`, `house_size`, `bath` y `brokered_by` impulsan el precio al alza con impactos que ahora llegan a millones de dólares en propiedades de lujo. A diferencia de `v3` (donde solo destacaba `state_Florida`), en `v6` aparecen claramente nuevos estados de alto valor empujando las estimaciones hacia arriba, como `state_California`, `state_Florida`, `state_Washington` y `state_Arizona`.
+
+<p align="center">
+  <img src="Evidencias/Shap2_V6.png" alt="SHAP Beeswarm V6" width="600" />
+</p>
+
+- **Explicación local de una propiedad de precio alto (Waterfall):** Parte del precio base del modelo (`$566,497.18`) y llega a una estimación de **`$1,455,247.51`**. El aumento responde sobre todo a una vivienda muy amplia (`house_size = 5,400 ft²`: `+$811,585.56`), el corredor (`brokered_by = 95772.0`: `+$223,849.41`) y la ubicación en Florida (`+$218,610.63`), compensado en parte por el código postal (`33463.0`: `-$175,282.24`) y la ciudad (`Greenacres`: `-$85,874.79`).
+
+<p align="center">
+  <img src="Evidencias/Shap3_V6.png" alt="SHAP Waterfall Alto V6" width="600" />
+</p>
+
+- **Explicación local de una propiedad de precio bajo (Waterfall):** Parte del mismo valor base (`$566,497.18`) y baja hasta **`$173,541.17`**. La reducción se explica por la combinación de ubicación económica y dimensiones reducidas: `zip_code = 64114.0` (`-$135,984.49`), `house_size = 1,001 ft²` (`-$116,993.85`), 1 baño (`-$58,487.08`), corredor (`-$37,662.16`), estado de Missouri (`-$30,564.02`) y ciudad de Kansas City (`-$16,267.21`), con un leve ajuste positivo por estar activa en venta (`status = for_sale`: `+$13,258.02`).
+
+<p align="center">
+  <img src="Evidencias/Shap4_V6.png" alt="SHAP Waterfall Bajo V6" width="600" />
+</p>
+
+- **Efecto del tamaño de la vivienda (Dependencia SHAP):** Muestra la relación entre `house_size` (recortado al percentil 99) y su aporte en dólares. A diferencia de `v3` —donde el efecto se aplanaba a partir de `2,200 ft²`—, en `v6` ese punto marca apenas el cruce hacia aportes positivos y la curva continúa subiendo de forma sostenida hasta los `6,000 ft²`, alcanzando contribuciones entre `+$500,000` y más de `+$1,000,000 USD` en propiedades de gran tamaño.
+
+<p align="center">
+  <img src="Evidencias/Shap5_V6.png" alt="SHAP Dependencia V6" width="600" />
+</p>
+
+#### Dinámica de *Data Drift*, Acumulación de Datos y Control de Fin de Lotes
+
+Durante las seis primeras ejecuciones, el *data drift* se originó porque la `Data API` entrega el conjunto inmobiliario de forma progresiva por segmentos de mercado y zonas geográficas diferenciadas, generando desplazamientos marcados en la distribución de precios y atributos (`KS = 1.000` en los lotes 2, 5 y 6; `KS = 0.271` en el lote 4; y `100.0%` de nuevas categorías geográficas en el lote 3). Debido a esta variabilidad entre entregas, en las seis corridas exitosas la compuerta automática `decide_training` activó el entrenamiento tras validar esquema, calidad y no duplicidad: el **Batch 1** construyó la línea base inicial al no existir un `@champion` previo, los **Batches 2, 4, 5 y 6** superaron el umbral de *drift* (`KS >= 0.08`) y el **Batch 3**, pese a presentar un *drift* numérico bajo (`KS = 0.0201`), excedió ampliamente el límite de categorías inéditas (`100.0% >= 10%`), por lo que en ninguna de estas iteraciones se cumplieron las condiciones de estabilidad requeridas para ejecutar `skip_training`. En cada ejecución válida, el pipeline acumula los nuevos registros limpios en PostgreSQL en lugar de sobrescribir los anteriores —creciendo desde `73,368` filas en el Batch 1 hasta `1,080,263` en el Batch 6— con el fin de incorporar mercados de mayor escala sin perder el conocimiento histórico; a su vez, la diferencia en el volumen por lote (desde `4,050` registros en el Batch 4 hasta `360,603` en el Batch 6) responde tanto a la partición desigual de la API externa como al descarte de filas durante la depuración en `preprocess_data`. Finalmente, el fallo en las **ejecuciones 7 y 8** no correspondió a un defecto del modelo ni del código, sino a que la `Data API` agotó los seis lotes disponibles y retornó `HTTP 400 Bad Request` (`"Ya se recolectó toda la información minima necesaria"`), lo que activó en `fetch_batch_from_api` los cuatro intentos controlados de Airflow (1 intento inicial y 3 reintentos) y detuvo las etapas posteriores en estado `upstream_failed`, evitando ocultar el fin de datos como una corrida exitosa y conservando íntegros los registros en PostgreSQL y el modelo `@champion` (`v6`) en producción.
+
+<p align="center">
+  <img src="Evidencias/Batch7.png" alt="Batch 7 Failure" width="600" />
+</p>
+
+
+<p align="center">
+  <img src="Evidencias/Agotamiento.png" alt="Batch 7 Failure" width="600" />
+</p>
+
+
+#### ¿Por qué se decidió entrenar un modelo en los 6 lotes exitosos?
+
+En las seis ejecuciones exitosas del DAG, la compuerta automática `decide_training` activó el entrenamiento porque **ningún lote cumplió las condiciones de estabilidad** requeridas para omitir el proceso (`skip_training`). La `Data API` no entrega muestras aleatorias homogéneas del mismo segmento, sino bloques particionados por distintas zonas geográficas y franjas de precio; al comparar cada lote entrante contra el histórico acumulado en PostgreSQL, todos activaron al menos una regla de reentrenamiento:
+
+| Lote | Regla que disparó el entrenamiento | Evidencia registrada |
+| :---: | :--- | :--- |
+| **Batch 1 (`v1`)** | Ausencia de modelo en producción | Creación obligatoria de la línea base inicial (`@champion`) |
+| **Batch 2 (`v2`)** | *Data drift* numérico | `KS = 1.000` (supera el umbral `>= 0.08`) |
+| **Batch 3 (`v3`)** | Nuevas categorías geográficas | `100.0%` de categorías inéditas (`>= 10%`), pese a `KS = 0.0201` |
+| **Batch 4 (`v4`)** | *Data drift* numérico | `KS = 0.271 >= 0.08` (además de `100.0%` de nuevas categorías) |
+| **Batch 5 (`v5`)** | *Data drift* numérico | `KS = 1.000 >= 0.08` por ingreso de propiedades de mayor valor |
+| **Batch 6 (`v6`)** | *Data drift* numérico | `KS = 1.000 >= 0.08` por incorporación de mercados de escala superior |
+
+Este comportamiento confirma que el pipeline no reentrenó de manera indiscriminada, sino que respondió a disparadores distintos según el contenido de cada entrega (línea base en el lote 1, novedad geográfica en el lote 3 y desplazamiento estadístico en los lotes 2, 4, 5 y 6). La rama `skip_training` habría entrado en acción únicamente si un lote hubiera mantenido una distribución estable (`KS < 0.08`) y menos de un `10%` de categorías nuevas, escenario que no se presentó en los datos suministrados por la API.
+
+
+### 1. Evolución del Entrenamiento Continuo y Decisiones por Ejecución
+
+| Ejecución / Lote | Filas del Lote | Acumulado Limpio | Regla de Disparo (`decide_training`) | Versión y Duración MLflow | Métricas Candidato (MAE / RMSE / $R^2$) | Comparación vs. `@champion` Vigente | Decisión (`decide_promotion`) |
+| :---: | :---: | :---: | :--- | :---: | :--- | :--- | :---: |
+| **Ejecución 1 (Batch 1)** | 73,368 | 73,368 | Línea base inicial (sin `@champion`) | `v1` (42.1 s) | `$38,079.53` / `$49,064.30` / `0.4302` | Primer modelo productivo | **Promovido (`v1`)** |
+| **Ejecución 2 (Batch 2)** | 94,029 | 167,397 | *Data drift* (`KS = 1.000 >= 0.08`) | `v2` (30.5 s) | `$36,664.77` / `$47,023.90` / `0.5602` | MAE `-7.38%` (`$36,665` vs `$39,586`) · RMSE `-7.43%` | **Promovido (`v2`)** |
+| **Ejecución 3 (Batch 3)** | 229,168 | 396,565 | Nuevas categorías (`100.0% >= 10%`) | `v3` (37.3 s) | `$34,729.14` / `$44,964.52` / `0.5915` | MAE `-3.82%` (`$34,729` vs `$36,107`) · RMSE `-3.42%` | **Promovido (`v3`)** |
+| **Ejecución 4 (Batch 4)** | 4,050 | 400,615 | *Data drift* (`KS = 0.271 >= 0.08`) | `v4` (5.7 s) | `$34,711.70` / `$44,961.43` / `0.5914` | Mejora MAE `-2.48%` (`$34,712` vs `$33,870`) · RMSE `+2.40%` | **Rechazado (`v3` vigente)** |
+| **Ejecución 5 (Batch 5)** | 319,045 | 719,660 | *Data drift* (`KS = 1.000 >= 0.08`) | `v5` (36.9 s) | `$46,172.75` / `$61,227.65` / `0.7343` | MAE `-43.58%` (`$46,173` vs `$81,842`) · RMSE `-43.38%` | **Promovido (`v5`)** |
+| **Ejecución 6 (Batch 6)** | 360,603 | 1,080,263 | *Data drift* (`KS = 1.000 >= 0.08`) | `v6` (55.2 s) | `$139,425.34` / `$463,400.82` / `0.7524` | MAE `-46.63%` (`$139,425` vs `$261,226`) · RMSE `-50.08%` | **Promovido (`v6 @champion`)** |
+| **Ejecución 7** | — | 1,080,263 | `HTTP 400` (*fin de datos disponibles*) | — | Sin entrenamiento | 4 intentos controlados (`retries=3`); `@champion v6` intacto | **Detenido (`failed`)** |
+| **Ejecución 8** | — | 1,080,263 | `HTTP 400` (*fin de datos disponibles*) | — | Sin entrenamiento | Revalidación determinística; `@champion v6` intacto | **Detenido (`failed`)** |
+
+---
+
+### 2. Interpretación Técnica de los Resultados
+
+1. **Activación heterogénea de reglas de entrenamiento (`decide_training`):**
+   - El pipeline no reentrenó de forma ciega; respondió automáticamente a distintos disparadores técnicos: creación de línea base (**Batch 1**), desplazamiento estadístico de distribución mediante prueba de Kolmogorov-Smirnov (**Batches 2, 4, 5 y 6**) e irrupción de nuevas categorías geográficas sin *drift* numérico significativo (**Batch 3**, donde `KS = 0.0201 < 0.08` pero `new_categories_ratio = 100.0% >= 10%`).
+
+2. **Protección de producción ante degradación (**Ejecución 4 — Candidato `v4` rechazado**):**
+   - El lote 4 aportó únicamente **4,050 registros** (~1 % del acumulado). Aunque superó el umbral de *drift* (`KS = 0.271`), al evaluarse contra `v3` sobre el mismo conjunto de prueba su desempeño empeoró (**MAE aumentó 2.48 %** y **RMSE aumentó 2.40 %**).
+   - La compuerta `decide_promotion` rechazó automáticamente `v4` (`challenger_rejected`), omitió el cálculo de SHAP y mantuvo `v3` sirviendo en FastAPI sin interrupción.
+
+3. **Efecto del *Data/Concept Drift* y cambio de escala en los **Batches 5 y 6**:**
+   - Aunque el MAE absoluto pasó de ~$34,729 (`v3`) a **$46,172.75 (`v5`)** y **$139,425.34 (`v6`)**, la capacidad explicativa del modelo **mejoró sustancialmente**, elevando el $R^2$ de **`0.4302` (`v1`) hasta `0.7524` (`v6`)**.
+   - El aumento en el error medido en dólares responde al ingreso de mercados inmobiliarios de escala muy superior (estados costosos como California, Florida y Washington, junto con propiedades de alto valor). Dado que el `@champion` previo desconocía esas distribuciones y códigos postales, su error se disparó hasta **$81,842** (lote 5) y **$261,226** (lote 6), mientras que el reentrenamiento automático redujo el MAE en **43.58 %** y **46.63 %** respectivamente (y el RMSE en **50.08 %** en el lote 6), demostrando la necesidad operativa del entrenamiento continuo.
+
+4. **Trazabilidad íntegra entre PostgreSQL, MLflow y MinIO:**
+   - Cada decisión registrada en `clean_data.training_audit_log` (visible en Streamlit) mantiene correspondencia exacta 1:1 con los **6 runs activos** del experimento `real_estate_continuous_training` en MLflow (`v1` a `v6`) y con las **6 carpetas de artefactos** persistidas en el bucket S3 `mlflow` de MinIO (**15.8 MiB · 66 objetos**, incluyendo modelos serializados y gráficas SHAP).
+
+5. **Resiliencia y consistencia ante fin de datos (**Ejecuciones 7 y 8**):**
+   - Al agotarse los 6 lotes de la `Data API`, el servicio respondió `HTTP 400 Bad Request` (`"Ya se recolectó toda la información minima necesaria"`). Tanto en la **ejecución 7** como al revalidar en la **ejecución 8**, Airflow aplicó de forma consistente los **4 intentos controlados** (1 intento inicial + 3 reintentos), detuvo las tareas posteriores (`upstream_failed`) sin enmascarar el error como exitoso y conservó íntegros los registros en PostgreSQL, el Model Registry en MLflow y el modelo `@champion v6` en FastAPI.
+
+---
+
+## Pruebas de carga
+
+Para validar el comportamiento de la API de inferencia (`FastAPI`) bajo tráfico concurrente, se implementó un stack completo de observabilidad y estrés compuesto por **Prometheus**, **Grafana** (aprovisionado de forma declarativa mediante los `ConfigMap` `grafana-dashboard-json` y `grafana-provisioning` en `k8s/`) y **Locust**, desplegados dentro del namespace `mlops-pf`.
+
+### 1. Recolección de Métricas y Validación en Prometheus
+
+FastAPI expone sus métricas en el endpoint `/metrics` y es monitoreado continuamente por Prometheus. En la vista de **Targets** se confirma que tanto `fastapi-inference` (`http://fastapi-svc:8000/metrics`, tiempo de raspado de `3.777 ms`) como `data-api` (`http://data-api-svc/metrics`, `5.783 ms`) operan en estado **`UP`** sin errores.
+
+<p align="center">
+  <img src="Evidencias/Prometheus_Targets.png" alt="Targets UP en Prometheus" width="600" />
+</p>
+
+Asimismo, la consulta directa sobre el indicador `loaded_model_version` valida que la API de inferencia atiende el tráfico con la versión **`6`** (`@champion`), correspondiente al modelo entrenado con el acumulado final de los 6 lotes.
+
+<p align="center">
+  <img src="Evidencias/loaded_model_version.png" alt="Versión del modelo cargado en Prometheus" width="600" />
+</p>
+
+Durante la inyección de carga, las consultas `inference_requests_total` (etiquetada con `model_version="6"` y `status="success"`) y `rate(inference_requests_total[1m])` registran en tiempo real el incremento sostenido de solicitudes por segundo atendidas por el servicio.
+
+<p align="center">
+  <img src="Evidencias/Prometheus_Test.png" alt="Tasa de peticiones en Prometheus durante la prueba de carga" width="600" />
+</p>
+
+---
+
+### 2. Ejecución y Resultados de Pruebas de Carga con Locust
+
+Las pruebas se ejecutaron desde el pod de Locust apuntando al servicio interno `http://fastapi-svc:8000` (usando el script `locustfile.py` del repositorio). Para replicarlas localmente basta con habilitar los túneles (`./start-ports.sh`), ingresar a `http://localhost:8089` y definir el perfil de usuarios concurrentes.
+
+Se realizaron **tres corridas escalonadas** (`Run #1`: 10 usuarios, `Run #2`: 50 usuarios y `Run #3`: 100 usuarios concurrentes) para observar tanto la línea base como el comportamiento bajo saturación:
+
+* **Rendimiento y estabilidad:** el sistema procesó **306 peticiones totales** (`249` a `POST /predict` y `57` a `GET /health`) con una tasa de **0% de fallos** (`0` errores) y un rendimiento sostenido de **4.8 RPS** (`4.4 RPS` en `/predict` y `0.4 RPS` en `/health`).
+* **Variación de latencia:** en el escenario inicial (`Run #1`, 10 usuarios) la latencia se mantuvo acotada (`P50 ≈ 1.5 s`, `P95 ≈ 2.6 s`). Al escalar hasta `100` usuarios concurrentes (`Run #3`), el tiempo de respuesta aumentó de forma progresiva por encolamiento de solicitudes (`POST /predict` alcanzó mediana de `19,000 ms` y `P95` de `24,000 ms`), sin provocar caídas ni respuestas HTTP de error.
+
+| Endpoint | Peticiones | Fallos | Mediana (ms) | P95 (ms) | Promedio (ms) | RPS |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `GET /health` | 57 | 0 (0%) | 1,100 | 6,200 | 2,074.19 | 0.4 |
+| `POST /predict` | 249 | 0 (0%) | 19,000 | 24,000 | 15,607.50 | 4.4 |
+| **Aggregated** | **306** | **0 (0%)** | **15,000** | **24,000** | **13,086.59** | **4.8** |
+
+<p align="center">
+  <img src="Evidencias/Locust_Test2.png" alt="Estadísticas de prueba de carga en Locust" width="600" />
+</p>
+
+<p align="center">
+  <img src="Evidencias/Locust_Test.png" alt="Gráficas de RPS, tiempos de respuesta y usuarios en Locust" width="600" />
+</p>
+
+---
+
+### 3. Visualización del Impacto en Grafana y Consumo de Recursos en Kubernetes
+
+El dashboard declarativo **`MLOps FastAPI & Locust Observability`** en Grafana refleja de forma integrada el impacto de las pruebas de Locust sobre la API:
+
+* **Peticiones por Segundo (RPS):** muestra el incremento de tráfico exitoso durante la ventana de carga (superando los `2.2 RPS` por réplica) y su descenso inmediato al finalizar la prueba.
+* **Latencia P95 de Inferencia:** evidencia el aumento de latencia bajo alta concurrencia hasta alcanzar el límite superior del histograma (`10 s`).
+* **Versión Activa del Modelo (`@champion`) y Tasa de Errores:** confirma en todo momento la versión **`6`** en producción con **`0 Errors/s`**.
+* **Consumo RAM y CPU de FastAPI:** registra un pico pronunciado de uso de CPU coincidente con la ráfaga de inferencias, mientras el consumo de memoria RAM se mantiene estable alrededor de `300–400 MB` sin fugas de memoria.
+
+<p align="center">
+  <img src="Evidencias/Grafana_Test.png" alt="Dashboard de observabilidad en Grafana durante la prueba de carga" width="600" />
+</p>
+
+Complementariamente, el monitoreo directo de recursos en Kubernetes (`kubectl top pods -n mlops-pf`) confirma el balanceo y consumo controlado de las dos réplicas de FastAPI bajo carga (`fastapi-dfc699dc6-wrrzd` en `123m` CPU / `210Mi` RAM y `fastapi-dfc699dc6-6zkzw` en `21m` CPU / `210Mi` RAM), junto con un consumo marginal de los servicios de prueba y observabilidad (`locust`: `2m` / `91Mi`, `grafana`: `2m` / `103Mi`).
+
+<p align="center">
+  <img src="Evidencias/RAM_CPU.png" alt="Consumo de CPU y memoria de los pods en Kubernetes" width="600" />
+</p>
+
+---
+
 ## 9. Evidencias de Despliegue y Operación
 
 A continuación se presentan las evidencias visuales del funcionamiento integral de la plataforma sobre **K3s (`mlops-pf`)**, cubriendo el flujo CI/CD + GitOps, el entrenamiento continuo, el servicio de inferencia, la explicabilidad SHAP y la observabilidad en tiempo real.
