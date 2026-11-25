@@ -6,6 +6,5 @@ __pycache__/
 venv/
 *.joblib
 *.parquet
-*.png
 .DS_Store
 k8s/base/00-secrets.yaml
