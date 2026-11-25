@@ -3,6 +3,9 @@ kind: Deployment
 metadata:
   name: streamlit
   namespace: mlops-pf
+  annotations:
+    gitops-test: "validacion-autosync-ok"
+
 spec:
   replicas: 1
   selector:
