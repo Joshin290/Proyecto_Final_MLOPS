@@ -692,7 +692,9 @@ Para eliminar conflictos de puertos locales y evitar reconexiones manuales tras 
 
 ---
 
-### Validación de ArgoCD y GitOps
+## 9. Evidencias de Despliegue y Operación
+
+### 9.1 Validación de ArgoCD y GitOps
 
 Para garantizar despliegues reproducibles y sin intervención manual sobre Kubernetes, el clúster se administra mediante un flujo **CI/CD + GitOps** que conecta **GitHub Actions**, **Docker Hub** y **Argo CD**. Cada cambio en el código construye y publica nuevas imágenes etiquetadas con el hash exacto del commit, actualiza automáticamente los manifiestos en `k8s/` y permite que la aplicación `mlops-proyecto-final` en Argo CD sincronice el namespace `mlops-pf`.
 
@@ -742,7 +744,7 @@ Finalmente, la pestaña `HISTORY AND ROLLBACK` conserva la línea de tiempo comp
 
 ---
 
-### Pruebas de Ejecución y Análisis de Resultados
+### 9.2 Pruebas de Ejecución y Análisis de Resultados
 
 Para validar el ciclo completo de **entrenamiento continuo (CT)**, gobernanza de modelos, trazabilidad de artefactos y explicabilidad, se ejecutó el pipeline `real_estate_mlops_dag` desde un estado limpio (PostgreSQL, MLflow, MinIO y Airflow reiniciados) consumiendo secuencialmente la totalidad de los lotes entregados por la `Data API` (`group_number=3`, `day=Tuesday`).
 
@@ -950,7 +952,7 @@ Este comportamiento confirma que el pipeline no reentrenó de manera indiscrimin
 
 ---
 
-### Pruebas de carga
+### 9.3 Pruebas de carga
 
 Para validar el comportamiento de la API de inferencia (`FastAPI`) bajo tráfico concurrente, se implementó un stack completo de observabilidad y estrés compuesto por **Prometheus**, **Grafana** (aprovisionado de forma declarativa mediante los `ConfigMap` `grafana-dashboard-json` y `grafana-provisioning` en `k8s/`) y **Locust**, desplegados dentro del namespace `mlops-pf`.
 
@@ -1022,9 +1024,9 @@ Complementariamente, el monitoreo directo de recursos en Kubernetes (`kubectl to
 
 ---
 
-## 9. Evidencias de Despliegue y Operación
+### 9.4 Pruebas de ejecución adicionales
 
-A continuación se presentan las evidencias visuales del funcionamiento integral de la plataforma sobre **K3s (`mlops-pf`)**, cubriendo el flujo CI/CD + GitOps, el entrenamiento continuo, el servicio de inferencia, la explicabilidad SHAP y la observabilidad en tiempo real.
+A continuación se presentan las evidencias visuales del funcionamiento integral de la plataforma, cubriendo el flujo CI/CD + GitOps, el entrenamiento continuo, el servicio de inferencia, la explicabilidad SHAP y la observabilidad en tiempo real.
 
 ---
 
