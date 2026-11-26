@@ -115,6 +115,7 @@ Proyecto_Final_MLOPS/
 ├── .github/
 │   └── workflows/
 │       └── ci-cd.yml                      # Pipeline CI/CD: build Docker Hub + bump GitOps en k8s/
+├── Evidencias/                            # Capturas de validación del proyecto
 ├── k8s/
 │   ├── base/                              # Namespace (mlops-pf), ConfigMaps y plantillas base
 │   ├── infrastructure/                    # Servicios base y plataforma de datos/ML
@@ -145,6 +146,7 @@ Proyecto_Final_MLOPS/
 │   └── streamlit/                         # Aplicación web para inferencia, historial y SHAP
 ├── argocd-application.yaml                # Definición declarativa de la aplicación en Argo CD
 ├── start-ports.sh                         # Script automatizado para gestionar todos los port-forwards
+├── MLOPS_Proyecto_Final_2026_2.pdf        # Enunciado / documentación oficial del proyecto final
 ├── .gitignore
 └── README.md
 ```
@@ -690,7 +692,7 @@ Para eliminar conflictos de puertos locales y evitar reconexiones manuales tras 
 
 ---
 
-## Validación de ArgoCD y GitOps
+### Validación de ArgoCD y GitOps
 
 Para garantizar despliegues reproducibles y sin intervención manual sobre Kubernetes, el clúster se administra mediante un flujo **CI/CD + GitOps** que conecta **GitHub Actions**, **Docker Hub** y **Argo CD**. Cada cambio en el código construye y publica nuevas imágenes etiquetadas con el hash exacto del commit, actualiza automáticamente los manifiestos en `k8s/` y permite que la aplicación `mlops-proyecto-final` en Argo CD sincronice el namespace `mlops-pf`.
 
@@ -740,7 +742,7 @@ Finalmente, la pestaña `HISTORY AND ROLLBACK` conserva la línea de tiempo comp
 
 ---
 
-## Pruebas de Ejecución y Análisis de Resultados
+### Pruebas de Ejecución y Análisis de Resultados
 
 Para validar el ciclo completo de **entrenamiento continuo (CT)**, gobernanza de modelos, trazabilidad de artefactos y explicabilidad, se ejecutó el pipeline `real_estate_mlops_dag` desde un estado limpio (PostgreSQL, MLflow, MinIO y Airflow reiniciados) consumiendo secuencialmente la totalidad de los lotes entregados por la `Data API` (`group_number=3`, `day=Tuesday`).
 
@@ -882,7 +884,7 @@ El sistema decidió entrenar el modelo **v6** durante el Batch 6 porque, al reci
   <img src="Evidencias/Shap5_V6.png" alt="SHAP Dependencia V6" width="600" />
 </p>
 
-#### Dinámica de *Data Drift*, Acumulación de Datos y Control de Fin de Lotes
+### Dinámica de *Data Drift*, Acumulación de Datos y Control de Fin de Lotes
 
 Durante las seis primeras ejecuciones, el *data drift* se originó porque la `Data API` entrega el conjunto inmobiliario de forma progresiva por segmentos de mercado y zonas geográficas diferenciadas, generando desplazamientos marcados en la distribución de precios y atributos (`KS = 1.000` en los lotes 2, 5 y 6; `KS = 0.271` en el lote 4; y `100.0%` de nuevas categorías geográficas en el lote 3). Debido a esta variabilidad entre entregas, en las seis corridas exitosas la compuerta automática `decide_training` activó el entrenamiento tras validar esquema, calidad y no duplicidad: el **Batch 1** construyó la línea base inicial al no existir un `@champion` previo, los **Batches 2, 4, 5 y 6** superaron el umbral de *drift* (`KS >= 0.08`) y el **Batch 3**, pese a presentar un *drift* numérico bajo (`KS = 0.0201`), excedió ampliamente el límite de categorías inéditas (`100.0% >= 10%`), por lo que en ninguna de estas iteraciones se cumplieron las condiciones de estabilidad requeridas para ejecutar `skip_training`. En cada ejecución válida, el pipeline acumula los nuevos registros limpios en PostgreSQL en lugar de sobrescribir los anteriores —creciendo desde `73,368` filas en el Batch 1 hasta `1,080,263` en el Batch 6— con el fin de incorporar mercados de mayor escala sin perder el conocimiento histórico; a su vez, la diferencia en el volumen por lote (desde `4,050` registros en el Batch 4 hasta `360,603` en el Batch 6) responde tanto a la partición desigual de la API externa como al descarte de filas durante la depuración en `preprocess_data`. Finalmente, el fallo en las **ejecuciones 7 y 8** no correspondió a un defecto del modelo ni del código, sino a que la `Data API` agotó los seis lotes disponibles y retornó `HTTP 400 Bad Request` (`"Ya se recolectó toda la información minima necesaria"`), lo que activó en `fetch_batch_from_api` los cuatro intentos controlados de Airflow (1 intento inicial y 3 reintentos) y detuvo las etapas posteriores en estado `upstream_failed`, evitando ocultar el fin de datos como una corrida exitosa y conservando íntegros los registros en PostgreSQL y el modelo `@champion` (`v6`) en producción.
 
@@ -948,7 +950,7 @@ Este comportamiento confirma que el pipeline no reentrenó de manera indiscrimin
 
 ---
 
-## Pruebas de carga
+### Pruebas de carga
 
 Para validar el comportamiento de la API de inferencia (`FastAPI`) bajo tráfico concurrente, se implementó un stack completo de observabilidad y estrés compuesto por **Prometheus**, **Grafana** (aprovisionado de forma declarativa mediante los `ConfigMap` `grafana-dashboard-json` y `grafana-provisioning` en `k8s/`) y **Locust**, desplegados dentro del namespace `mlops-pf`.
 
